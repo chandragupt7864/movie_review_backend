@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import requests
 from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from app.agent_factory import build_movie_discovery_agent
 from app.config import PROJECT_ROOT, settings
@@ -640,8 +641,9 @@ def get_draft_video_file(movie_id: int, preview: bool = False):
         shorts_data = movie.get("shorts_data_json") or {}
         cloudinary_url = shorts_data.get("cloudinary_video_url") if isinstance(shorts_data, dict) else None
         if cloudinary_url:
-            redirect_url = str(cloudinary_url) if preview else _cloudinary_attachment_url(str(cloudinary_url))
-            return RedirectResponse(url=redirect_url)
+            if preview:
+                return RedirectResponse(url=str(cloudinary_url))
+            return _cloudinary_video_download_response(str(cloudinary_url), local_path.name)
         raise HTTPException(status_code=404, detail="Draft video file is missing on disk.")
 
     return FileResponse(path=local_path, media_type="video/mp4", filename=local_path.name)
@@ -669,7 +671,7 @@ def get_final_video_file(movie_id: int):
         shorts_data = movie.get("shorts_data_json") or {}
         cloudinary_url = shorts_data.get("cloudinary_video_url") if isinstance(shorts_data, dict) else None
         if cloudinary_url:
-            return RedirectResponse(url=_cloudinary_attachment_url(str(cloudinary_url)))
+            return _cloudinary_video_download_response(str(cloudinary_url), local_path.name)
         raise HTTPException(status_code=404, detail="Final video file is missing on disk.")
 
     return FileResponse(path=local_path, media_type="video/mp4", filename=local_path.name)
@@ -1332,6 +1334,34 @@ def _cloudinary_attachment_url(url: str) -> str:
     return url.replace(marker, "/upload/fl_attachment/", 1)
 
 
+def _cloudinary_video_download_response(url: str, filename: str) -> StreamingResponse:
+    """Proxy a Cloudinary video as a same-origin attachment for mobile WebViews."""
+    try:
+        upstream = requests.get(url, stream=True, timeout=(10, 120), allow_redirects=True)
+        upstream.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Could not fetch video from Cloudinary: {exc}") from exc
+
+    safe_filename = Path(filename).name or "final_shorts.mp4"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{safe_filename}"',
+        "Cache-Control": "private, max-age=0",
+    }
+    content_length = upstream.headers.get("Content-Length")
+    if content_length:
+        headers["Content-Length"] = content_length
+
+    def iter_content():
+        try:
+            for chunk in upstream.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return StreamingResponse(iter_content(), media_type="video/mp4", headers=headers)
+
+
 def _build_frontend_movie_payload(movie: dict) -> dict:
     movie_id = int(movie["id"])
     scene_data = movie.get("scene_data_json") or {}
@@ -1410,7 +1440,7 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
             "master_video_path": master_video_path,
             "master_video_file_url": preview_url,
             "draft_video_path": draft_video_path,
-            "draft_video_file_url": cloudinary_video_download_url or draft_preview_url,
+            "draft_video_file_url": draft_preview_url,
             "final_video_path": final_video_path,
             "final_video_file_url": final_preview_url,
             "thumbnail_path": thumbnail_path,
@@ -1500,7 +1530,7 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
             "preview_master_video_url": preview_url,
             "preview_draft_video_url": draft_preview_url,
             "preview_final_video_url": final_preview_url,
-            "download_final_video_url": cloudinary_video_download_url or f"/movies/{movie_id}/final-video-file",
+            "download_final_video_url": f"/movies/{movie_id}/final-video-file",
             "preview_thumbnail_url": thumbnail_preview_url,
         },
         "messages": {
