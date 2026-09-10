@@ -13,7 +13,6 @@ google-genai
 mutagen
 moviepy
 yt-dlp[default]
-bgutil-ytdlp-pot-provider==1.3.2
 opencv-python-headless
 scenedetect
 static-ffmpeg

@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from app.agent_factory import build_movie_discovery_agent
 from app.config import PROJECT_ROOT, settings
@@ -436,6 +436,13 @@ def upload_movie_bgm(movie_id: int, file: UploadFile = File(...)):
             raise ValueError("BGM MP3 must be at least 5 seconds long.")
         target_duration = _resolve_bgm_duration(movie)
         prompt = LyriaMusicService.build_prompt(movie=movie, duration_seconds=target_duration)
+        cloudinary_bgm = None
+        if settings.cloudinary_bgm_upload_enabled:
+            cloudinary_bgm = CloudinaryVideoStorageService().upload_bgm(
+                movie_id=movie_id,
+                local_file_path=relative_path,
+            )
+
         bgm_data = {
             "provider": "manual_gemini_upload",
             "model": "Gemini manual generation",
@@ -447,6 +454,9 @@ def upload_movie_bgm(movie_id: int, file: UploadFile = File(...)):
             "requested_duration_seconds": round(target_duration, 3),
             "uploaded_at": uploaded_at,
             "bgm_audio_path": relative_path,
+            "cloudinary_bgm_url": cloudinary_bgm["secure_url"] if cloudinary_bgm else None,
+            "cloudinary_public_id": cloudinary_bgm["public_id"] if cloudinary_bgm else None,
+            "cloudinary": cloudinary_bgm or {},
         }
         repository.update_bgm_generation(
             movie_id=movie_id,
@@ -469,6 +479,7 @@ def upload_movie_bgm(movie_id: int, file: UploadFile = File(...)):
         "movie_id": movie_id,
         "bgm_status": "COMPLETED",
         "bgm_audio_path": relative_path,
+        "cloudinary_bgm_url": cloudinary_bgm["secure_url"] if cloudinary_bgm else None,
         "duration_seconds": round(duration, 3),
         "next_agent": "SHORTS_COMPOSER_AGENT",
     }
@@ -489,6 +500,18 @@ def generate_movie_bgm(movie_id: int):
     repository.update_bgm_generation(movie_id=movie_id, status="RUNNING")
     try:
         generated = LyriaMusicService().generate_for_movie(movie=movie, duration_seconds=duration)
+        if settings.cloudinary_bgm_upload_enabled:
+            cloudinary_bgm = CloudinaryVideoStorageService().upload_bgm(
+                movie_id=movie_id,
+                local_file_path=generated["bgm_audio_path"],
+            )
+            generated.update(
+                {
+                    "cloudinary_bgm_url": cloudinary_bgm["secure_url"],
+                    "cloudinary_public_id": cloudinary_bgm["public_id"],
+                    "cloudinary": cloudinary_bgm,
+                }
+            )
         repository.update_bgm_generation(
             movie_id=movie_id,
             status="COMPLETED",
@@ -521,6 +544,10 @@ def get_movie_bgm_file(movie_id: int):
     if not path.is_absolute():
         path = PROJECT_ROOT / path
     if not path.exists() or not path.is_file():
+        bgm_data = movie.get("bgm_data_json") or {}
+        cloudinary_url = bgm_data.get("cloudinary_bgm_url") if isinstance(bgm_data, dict) else None
+        if cloudinary_url:
+            return RedirectResponse(url=str(cloudinary_url))
         raise HTTPException(status_code=404, detail="Background music file is missing on disk.")
     return FileResponse(path=path, media_type="audio/mpeg", filename=path.name)
 
@@ -634,6 +661,10 @@ def get_final_video_file(movie_id: int):
     if not local_path.is_absolute():
         local_path = PROJECT_ROOT / local_path
     if not local_path.exists() or not local_path.is_file():
+        shorts_data = movie.get("shorts_data_json") or {}
+        cloudinary_url = shorts_data.get("cloudinary_video_url") if isinstance(shorts_data, dict) else None
+        if cloudinary_url:
+            return RedirectResponse(url=str(cloudinary_url))
         raise HTTPException(status_code=404, detail="Final video file is missing on disk.")
 
     return FileResponse(path=local_path, media_type="video/mp4", filename=local_path.name)
@@ -987,8 +1018,22 @@ def upload_thumbnail(movie_id: int, file: UploadFile = File(...)):
 
         final_thumbnail_path = relative_local_path
         uploaded_to_supabase = False
+        uploaded_to_cloudinary = False
+        cloudinary_thumbnail = None
         storage_warnings = []
-        if settings.thumbnail_upload_to_supabase and settings.supabase_url and settings.supabase_service_role_key:
+        if settings.cloudinary_thumbnail_upload_enabled:
+            try:
+                cloudinary_thumbnail = CloudinaryVideoStorageService().upload_thumbnail(
+                    movie_id=movie_id,
+                    local_file_path=relative_local_path,
+                )
+                uploaded_to_cloudinary = True
+            except Exception as exc:
+                logger.warning("Thumbnail Cloudinary upload failed for movie %s; keeping local image", movie_id, exc_info=True)
+                if settings.cloudinary_thumbnail_upload_required:
+                    raise ValueError(f"Cloudinary thumbnail upload failed: {exc}") from exc
+                storage_warnings.append("Cloudinary backup unavailable. Thumbnail saved locally and ready for Shorts.")
+        elif settings.thumbnail_upload_to_supabase and settings.supabase_url and settings.supabase_service_role_key:
             try:
                 storage_service = SupabaseStorageService()
                 upload_result = storage_service.upload_file(
@@ -1014,6 +1059,10 @@ def upload_thumbnail(movie_id: int, file: UploadFile = File(...)):
             "content_type": content_type,
             "local_output_path": relative_local_path,
             "uploaded_to_supabase": uploaded_to_supabase,
+            "uploaded_to_cloudinary": uploaded_to_cloudinary,
+            "cloudinary_thumbnail_url": cloudinary_thumbnail["secure_url"] if cloudinary_thumbnail else None,
+            "cloudinary_public_id": cloudinary_thumbnail["public_id"] if cloudinary_thumbnail else None,
+            "cloudinary": cloudinary_thumbnail or {},
             "storage_path": storage_path if uploaded_to_supabase else None,
             "generated_at": uploaded_at,
         }
@@ -1030,7 +1079,11 @@ def upload_thumbnail(movie_id: int, file: UploadFile = File(...)):
                     agent="MANUAL_THUMBNAIL_UPLOAD",
                     status="COMPLETED",
                     message=f"Manual thumbnail uploaded: {file.filename}",
-                    data={"thumbnail_path": final_thumbnail_path, "uploaded_to_supabase": uploaded_to_supabase},
+                    data={
+                        "thumbnail_path": final_thumbnail_path,
+                        "uploaded_to_supabase": uploaded_to_supabase,
+                        "uploaded_to_cloudinary": uploaded_to_cloudinary,
+                    },
                 ),
             },
         )
@@ -1048,6 +1101,8 @@ def upload_thumbnail(movie_id: int, file: UploadFile = File(...)):
         "movie_id": movie_id,
         "thumbnail_path": final_thumbnail_path,
         "uploaded_to_supabase": uploaded_to_supabase,
+        "uploaded_to_cloudinary": uploaded_to_cloudinary,
+        "cloudinary_thumbnail_url": cloudinary_thumbnail["secure_url"] if cloudinary_thumbnail else None,
         "next_agent": "SHORTS_COMPOSER_AGENT" if movie.get("render_status") == "COMPLETED" else movie.get("next_agent"),
         "message": "Thumbnail uploaded. Compose Shorts to include it as a 2-second ending.",
     }
@@ -1262,7 +1317,12 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
     preview_url = f"/movies/{movie_id}/master-video-file" if master_video_path else None
     draft_preview_url = f"/movies/{movie_id}/draft-video-file" if draft_video_path else None
     final_preview_url = f"/movies/{movie_id}/final-video-file" if final_video_path else None
-    thumbnail_preview_url = f"/movies/{movie_id}/thumbnail-file" if thumbnail_path else None
+    cloudinary_thumbnail_url = thumbnail_data.get("cloudinary_thumbnail_url") if isinstance(thumbnail_data, dict) else None
+    cloudinary_video_url = shorts_data.get("cloudinary_video_url") if isinstance(shorts_data, dict) else None
+    bgm_data = movie.get("bgm_data_json") or {}
+    cloudinary_bgm_url = bgm_data.get("cloudinary_bgm_url") if isinstance(bgm_data, dict) else None
+    thumbnail_preview_url = cloudinary_thumbnail_url or (f"/movies/{movie_id}/thumbnail-file" if thumbnail_path else None)
+    final_preview_url = cloudinary_video_url or final_preview_url
     run_cut_merge_url = f"/agents/cut-merge/run/{movie_id}?force=true"
     run_scene_selection_url = f"/agents/scene-selection/run/{movie_id}?force=true"
     run_shorts_composer_url = f"/agents/shorts-composer/run/{movie_id}?force=true"
@@ -1315,6 +1375,9 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
             "final_video_file_url": final_preview_url,
             "thumbnail_path": thumbnail_path,
             "thumbnail_file_url": thumbnail_preview_url,
+            "cloudinary_bgm_url": cloudinary_bgm_url,
+            "cloudinary_thumbnail_url": cloudinary_thumbnail_url,
+            "cloudinary_video_url": cloudinary_video_url,
         },
         "source_videos": [
             {
@@ -1356,6 +1419,7 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
             "preprocessing": shorts_data.get("preprocessing") or {},
             "audio_mix": shorts_data.get("audio_mix") or {},
             "warnings": shorts_data.get("warnings") or [],
+            "cloudinary_video_url": cloudinary_video_url,
         },
         "thumbnail": {
             "ready": thumbnail_status == "COMPLETED" and bool(thumbnail_path),
@@ -1371,6 +1435,7 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
             "references_used": list(thumbnail_data.get("references_used") or []),
             "foreground_used": thumbnail_data.get("foreground_used"),
             "warnings": list(thumbnail_data.get("warnings") or []),
+            "cloudinary_thumbnail_url": cloudinary_thumbnail_url,
         },
         "actions": {
             "can_run_scene_selection": bool(movie.get("voice_audio_path")) and len(source_videos) > 0,
@@ -1546,6 +1611,11 @@ def get_thumbnail_file(movie_id: int):
     if local_path.exists() and local_path.is_file():
         return FileResponse(path=local_path, media_type=_thumbnail_content_type(local_path.suffix.lower()), filename=local_path.name)
 
+    thumbnail_data = movie.get("thumbnail_data_json") or {}
+    cloudinary_url = thumbnail_data.get("cloudinary_thumbnail_url") if isinstance(thumbnail_data, dict) else None
+    if cloudinary_url:
+        return RedirectResponse(url=str(cloudinary_url))
+
     # Supabase signed URL or redirect
     bucket_prefix = f"{settings.supabase_thumbnail_bucket}/"
     storage_path = str(thumbnail_path)
@@ -1564,7 +1634,6 @@ def get_thumbnail_file(movie_id: int):
             storage_service.bucket = original_bucket
             storage_service.storage = storage_service.client.storage.from_(original_bucket)
             
-        from fastapi.responses import RedirectResponse
         return RedirectResponse(url=signed_url)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not get thumbnail from Supabase: {exc}") from exc

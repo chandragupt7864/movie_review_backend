@@ -108,7 +108,7 @@ class Settings:
         ).strip()
         self.yt_dlp_cookies_from_browser = os.getenv("YT_DLP_COOKIES_FROM_BROWSER", "").strip().lower()
         self.yt_dlp_player_clients = self._get_csv("YT_DLP_PLAYER_CLIENTS", default=["mweb"])
-        self.yt_dlp_pot_provider_enabled = self._get_bool("YT_DLP_POT_PROVIDER_ENABLED", default=True)
+        self.yt_dlp_pot_provider_enabled = self._get_bool("YT_DLP_POT_PROVIDER_ENABLED", default=False)
         self.yt_dlp_pot_provider_server_dir = os.getenv(
             "YT_DLP_POT_PROVIDER_SERVER_DIR",
             "tools/bgutil-ytdlp-pot-provider/server",
@@ -162,10 +162,15 @@ class Settings:
         self.cloudinary_api_key = os.getenv("CLOUDINARY_API_KEY", "").strip()
         self.cloudinary_api_secret = os.getenv("CLOUDINARY_API_SECRET", "").strip()
         self.cloudinary_video_folder = os.getenv("CLOUDINARY_VIDEO_FOLDER", "reelybee/final-videos").strip() or "reelybee/final-videos"
+        self.cloudinary_bgm_folder = os.getenv("CLOUDINARY_BGM_FOLDER", "reelybee/music").strip() or "reelybee/music"
+        self.cloudinary_thumbnail_folder = os.getenv("CLOUDINARY_THUMBNAIL_FOLDER", "reelybee/thumbnails").strip() or "reelybee/thumbnails"
         self.cloudinary_video_chunk_size_mb = self._get_int("CLOUDINARY_VIDEO_CHUNK_SIZE_MB", default=20)
         cloudinary_configured = bool(self.cloudinary_cloud_name and self.cloudinary_api_key and self.cloudinary_api_secret)
         self.cloudinary_video_upload_enabled = self._get_bool("UPLOAD_FINAL_VIDEO_TO_CLOUDINARY", default=cloudinary_configured)
+        self.cloudinary_bgm_upload_enabled = self._get_bool("UPLOAD_BGM_TO_CLOUDINARY", default=cloudinary_configured)
+        self.cloudinary_thumbnail_upload_enabled = self._get_bool("UPLOAD_THUMBNAIL_TO_CLOUDINARY", default=cloudinary_configured)
         self.cloudinary_video_upload_required = self._get_bool("CLOUDINARY_VIDEO_UPLOAD_REQUIRED", default=False)
+        self.cloudinary_thumbnail_upload_required = self._get_bool("CLOUDINARY_THUMBNAIL_UPLOAD_REQUIRED", default=False)
         self.ffmpeg_binary_path = self.ffmpeg_binary
         self.thumbnail_output_dir = os.getenv("THUMBNAIL_OUTPUT_DIR", "storage/thumbnails").strip() or "storage/thumbnails"
         self.thumbnail_reference_dir = os.getenv("THUMBNAIL_REFERENCE_DIR", "storage/thumbnail_refs").strip() or "storage/thumbnail_refs"

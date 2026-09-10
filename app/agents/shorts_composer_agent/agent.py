@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from app.agents.shorts_composer_agent.schema import ShortsComposerResult, ShortsComposerRunResponse
 from app.config import settings
 from app.core.agent_status import (
@@ -83,10 +85,25 @@ class ShortsComposerAgent:
 
         try:
             output_path = self.shorts_composer_service.build_output_path(movie_id=movie_id)
+            bgm_data = locked_movie.get("bgm_data_json") or {}
+            thumbnail_data = locked_movie.get("thumbnail_data_json") or {}
             bgm_path = (
                 (locked_movie.get("bgm_audio_path") or settings.bgm_default_path)
                 if settings.bgm_enabled
                 else None
+            )
+            bgm_path = self._restore_cloudinary_asset(
+                movie_id=movie_id,
+                local_path=bgm_path,
+                cloudinary_url=bgm_data.get("cloudinary_bgm_url") if isinstance(bgm_data, dict) else None,
+                filename="background_music.mp3",
+            )
+            thumbnail_path = (thumbnail_data.get("local_output_path") if isinstance(thumbnail_data, dict) else None) or locked_movie.get("thumbnail_path")
+            thumbnail_path = self._restore_cloudinary_asset(
+                movie_id=movie_id,
+                local_path=thumbnail_path,
+                cloudinary_url=thumbnail_data.get("cloudinary_thumbnail_url") if isinstance(thumbnail_data, dict) else None,
+                filename="thumbnail.jpg",
             )
             compose_result = self.shorts_composer_service.compose_shorts_draft(
                 movie_id=movie_id,
@@ -95,7 +112,7 @@ class ShortsComposerAgent:
                 output_path=output_path,
                 bgm_path=bgm_path,
                 appearance=appearance if appearance is not None else (locked_movie.get("shorts_data_json") or {}).get("appearance"),
-                thumbnail_path=(locked_movie.get("thumbnail_data_json") or {}).get("local_output_path") or locked_movie.get("thumbnail_path"),
+                thumbnail_path=thumbnail_path,
             )
             upload_warnings = list(compose_result.get("warnings") or [])
             if self.cloudinary_video_storage_service is not None:
@@ -133,6 +150,7 @@ class ShortsComposerAgent:
                     ),
                 },
             )
+
             return ShortsComposerResult(
                 movie_id=movie_id,
                 tmdb_id=tmdb_id,
@@ -170,6 +188,30 @@ class ShortsComposerAgent:
                 status=SHORTS_FAILED,
                 error=str(exc),
             )
+
+    def _restore_cloudinary_asset(
+        self,
+        movie_id: int,
+        local_path: str | None,
+        cloudinary_url: str | None,
+        filename: str,
+    ) -> str | None:
+        if local_path:
+            candidate = Path(local_path)
+            if not candidate.is_absolute():
+                from app.config import PROJECT_ROOT
+
+                candidate = PROJECT_ROOT / candidate
+            if candidate.is_file():
+                return local_path
+        if not cloudinary_url or self.cloudinary_video_storage_service is None:
+            return local_path
+        restored_path = Path(settings.shorts_temp_dir) / f"movie_{movie_id}" / filename
+        self.cloudinary_video_storage_service.download_asset(
+            secure_url=cloudinary_url,
+            local_file_path=str(restored_path),
+        )
+        return str(restored_path).replace("\\", "/")
 
     @staticmethod
     def _eligibility_error(movie: dict, force: bool) -> str | None:

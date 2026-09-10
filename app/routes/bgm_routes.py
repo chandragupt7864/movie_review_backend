@@ -124,6 +124,14 @@ def get_bgm_play_url(track_id: int):
     if not row.get("storage_path"):
         raise HTTPException(status_code=404, detail="Track storage path not found.")
 
+    if row.get("storage_bucket") == "cloudinary" or str(row["storage_path"]).startswith("https://"):
+        return {
+            "success": True,
+            "track_id": track_id,
+            "signed_url": str(row["storage_path"]),
+            "expires_in_seconds": None,
+        }
+
     try:
         signed_url = SupabaseStorageService().create_signed_url(
             storage_path=str(row["storage_path"]),

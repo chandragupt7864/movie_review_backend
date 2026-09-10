@@ -12,6 +12,7 @@ from app.services.music_copyright_assessment_service import MusicCopyrightAssess
 from app.services.music_fingerprint_service import MusicFingerprintService
 from app.services.music_recognition_service import MusicRecognitionService
 from app.services.supabase_storage_service import SupabaseStorageService
+from app.services.cloudinary_video_storage_service import CloudinaryVideoStorageService
 
 
 class BGMLibraryService:
@@ -117,8 +118,19 @@ class BGMLibraryService:
             created = self.repository.create_bgm_track(payload)
             storage_path = f"tracks/{track_code}/{sha256_hash}.{extension}"
             try:
-                self._upload_to_supabase(temp_path, storage_path, payload["mime_type"])
-                updated = self.repository.update_bgm_storage(created["id"], settings.supabase_bgm_bucket, storage_path)
+                if settings.cloudinary_bgm_upload_enabled:
+                    cloudinary_result = CloudinaryVideoStorageService().upload_library_bgm(
+                        track_code=track_code,
+                        local_file_path=str(temp_path),
+                    )
+                    updated = self.repository.update_bgm_storage(
+                        created["id"],
+                        "cloudinary",
+                        cloudinary_result["secure_url"],
+                    )
+                else:
+                    self._upload_to_supabase(temp_path, storage_path, payload["mime_type"])
+                    updated = self.repository.update_bgm_storage(created["id"], settings.supabase_bgm_bucket, storage_path)
             except Exception:
                 self.repository.delete_bgm_track(int(created["id"]))
                 raise
@@ -137,11 +149,17 @@ class BGMLibraryService:
         with NamedTemporaryFile(delete=False, suffix=suffix) as handle:
             temp_path = Path(handle.name)
         try:
-            self._get_storage_service().download_file(
-                storage_path=str(track["storage_path"]),
-                local_file_path=str(temp_path),
-                bucket=str(track.get("storage_bucket") or settings.supabase_bgm_bucket),
-            )
+            if track.get("storage_bucket") == "cloudinary" or str(track["storage_path"]).startswith("https://"):
+                CloudinaryVideoStorageService().download_asset(
+                    secure_url=str(track["storage_path"]),
+                    local_file_path=str(temp_path),
+                )
+            else:
+                self._get_storage_service().download_file(
+                    storage_path=str(track["storage_path"]),
+                    local_file_path=str(temp_path),
+                    bucket=str(track.get("storage_bucket") or settings.supabase_bgm_bucket),
+                )
             analysis_result = self.analysis_service.analyze(temp_path)
             fingerprint_result = self._fingerprint(temp_path)
             trusted_track = self.repository.get_verified_track_by_fingerprint(fingerprint_result.get("fingerprint") or "")

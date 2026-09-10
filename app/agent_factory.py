@@ -90,7 +90,11 @@ def build_shorts_composer_agent() -> ShortsComposerAgent:
     if settings.supabase_url and settings.supabase_service_role_key:
         storage_service = SupabaseStorageService()
     cloudinary_video_storage_service = None
-    if settings.cloudinary_video_upload_enabled:
+    if (
+        settings.cloudinary_video_upload_enabled
+        or settings.cloudinary_bgm_upload_enabled
+        or settings.cloudinary_thumbnail_upload_enabled
+    ):
         cloudinary_video_storage_service = CloudinaryVideoStorageService()
     return ShortsComposerAgent(
         repository=MoviePipelineRepository(),
@@ -103,11 +107,15 @@ def build_thumbnail_metadata_agent() -> ThumbnailMetadataAgent:
     storage_service = None
     if settings.supabase_url and settings.supabase_service_role_key:
         storage_service = SupabaseStorageService()
+    cloudinary_storage_service = None
+    if settings.cloudinary_thumbnail_upload_enabled:
+        cloudinary_storage_service = CloudinaryVideoStorageService()
     return ThumbnailMetadataAgent(
         repository=MoviePipelineRepository(),
         asset_service=ThumbnailAssetService(),
         generator_service=PythonThumbnailGeneratorService(),
         storage_service=storage_service,
+        cloudinary_storage_service=cloudinary_storage_service,
     )
 
 

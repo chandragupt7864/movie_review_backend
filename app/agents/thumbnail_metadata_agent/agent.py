@@ -19,11 +19,12 @@ logger = logging.getLogger(__name__)
 class ThumbnailMetadataAgent:
     agent_name = CURRENT_AGENT_THUMBNAIL_METADATA
 
-    def __init__(self, repository, asset_service, generator_service, storage_service) -> None:
+    def __init__(self, repository, asset_service, generator_service, storage_service, cloudinary_storage_service=None) -> None:
         self.repository = repository
         self.asset_service = asset_service
         self.generator_service = generator_service
         self.storage_service = storage_service
+        self.cloudinary_storage_service = cloudinary_storage_service
 
     def run(self, limit: int = 1) -> dict:
         jobs = self.repository.get_pending_thumbnail_jobs(limit=limit)
@@ -108,12 +109,26 @@ class ThumbnailMetadataAgent:
                 output_path=local_output_path
             )
 
-            # 4. Upload to Supabase Storage if enabled
+            # 4. Keep the local file for FFmpeg and persist a cloud copy.
             uploaded_to_supabase = False
+            uploaded_to_cloudinary = False
             supabase_path = None
             final_thumbnail_path = gen_result["output_path"]
+            cloudinary_result = None
 
-            if settings.thumbnail_upload_to_supabase and self.storage_service:
+            if settings.cloudinary_thumbnail_upload_enabled and self.cloudinary_storage_service:
+                try:
+                    cloudinary_result = self.cloudinary_storage_service.upload_thumbnail(
+                        movie_id=movie_id,
+                        local_file_path=local_output_path,
+                    )
+                    uploaded_to_cloudinary = True
+                except Exception as e:
+                    if settings.cloudinary_thumbnail_upload_required:
+                        raise
+                    warnings.append(f"Failed to upload thumbnail to Cloudinary: {e}")
+                    logger.warning("Failed to upload thumbnail to Cloudinary: %s", e, exc_info=True)
+            elif settings.thumbnail_upload_to_supabase and self.storage_service:
                 try:
                     storage_path = f"thumbnails/movie_{movie_id}/thumbnail_{timestamp}.jpg"
                     upload_res = self.storage_service.upload_file(
@@ -148,6 +163,10 @@ class ThumbnailMetadataAgent:
                 "references_used": gen_result["references_used"],
                 "foreground_used": gen_result.get("foreground_used"),
                 "uploaded_to_supabase": uploaded_to_supabase,
+                "uploaded_to_cloudinary": uploaded_to_cloudinary,
+                "cloudinary_thumbnail_url": cloudinary_result["secure_url"] if cloudinary_result else None,
+                "cloudinary_public_id": cloudinary_result["public_id"] if cloudinary_result else None,
+                "cloudinary": cloudinary_result or {},
                 "supabase_path": supabase_path,
                 "warnings": warnings,
                 "generated_at": datetime.now(timezone.utc).isoformat()
@@ -163,7 +182,13 @@ class ThumbnailMetadataAgent:
                 "timeline_event": build_timeline_event(
                     agent=self.agent_name,
                     status=THUMBNAIL_COMPLETED,
-                    message="Thumbnail generated using Python and uploaded to Supabase Storage" if uploaded_to_supabase else "Thumbnail generated locally (Supabase upload failed/skipped)",
+                    message=(
+                        "Thumbnail generated using Python and uploaded to Cloudinary"
+                        if uploaded_to_cloudinary
+                        else "Thumbnail generated using Python and uploaded to Supabase Storage"
+                        if uploaded_to_supabase
+                        else "Thumbnail generated locally (cloud upload failed/skipped)"
+                    ),
                     data={
                         "tmdb_id": tmdb_id,
                         "thumbnail_path": final_thumbnail_path,
