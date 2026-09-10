@@ -1289,6 +1289,49 @@ class MoviePipelineRepository:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def retry_video_download(self, movie_id: int) -> dict | None:
+        """Requeue an exhausted downloader job without requiring direct DB edits."""
+        self.ensure_video_download_status_column()
+        with get_db_cursor(commit=True) as cursor:
+            cursor.execute(
+                """
+                UPDATE movie_review_pipeline
+                SET
+                    video_download_status = %(video_download_status)s,
+                    overall_status = %(overall_status)s,
+                    next_agent = %(next_agent)s,
+                    current_agent = NULL,
+                    is_locked = FALSE,
+                    locked_by = NULL,
+                    locked_at = NULL,
+                    last_error_agent = NULL,
+                    last_error_message = NULL,
+                    error_data_json = COALESCE(error_data_json, '{}'::jsonb)
+                        || %(retry_data)s::jsonb,
+                    updated_at = NOW()
+                WHERE id = %(movie_id)s
+                RETURNING *;
+                """,
+                {
+                    "movie_id": movie_id,
+                    "video_download_status": VIDEO_DOWNLOAD_PENDING,
+                    "overall_status": OVERALL_VOICE_READY,
+                    "next_agent": NEXT_AGENT_VIDEO_DOWNLOADER,
+                    "retry_data": Json(
+                        {
+                            "manual_source_url_required": False,
+                            "automatic_retry_blocked": False,
+                            "youtube_auth_required": False,
+                            "video_download_attempt_count": 0,
+                            "retry_exhausted": False,
+                            "failed_candidate_keys": [],
+                        }
+                    ),
+                },
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def get_voice_audio_cleanup_candidates(self, safe_only: bool) -> list[dict]:
         render_filter = "AND final_video_path IS NOT NULL" if safe_only else ""
         with get_db_cursor() as cursor:
@@ -1509,7 +1552,9 @@ class MoviePipelineRepository:
                     "video_download_status": VIDEO_DOWNLOAD_FAILED,
                     "overall_status": OVERALL_VIDEO_DOWNLOAD_FAILED,
                     "agent": CURRENT_AGENT_VIDEO_DOWNLOADER,
-                    "next_agent": NEXT_AGENT_DONE,
+                    # A failed source download is not the end of the movie
+                    # pipeline. Keep it recoverable through retry/manual upload.
+                    "next_agent": NEXT_AGENT_VIDEO_DOWNLOADER,
                     "error_data_json": Json(error_payload["error_data"]),
                     "timeline_event": Json([error_payload["timeline_event"]]),
                 },

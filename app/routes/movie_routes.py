@@ -637,6 +637,11 @@ def get_draft_video_file(movie_id: int, preview: bool = False):
     if not local_path.is_absolute():
         local_path = PROJECT_ROOT / local_path
     if not local_path.exists() or not local_path.is_file():
+        shorts_data = movie.get("shorts_data_json") or {}
+        cloudinary_url = shorts_data.get("cloudinary_video_url") if isinstance(shorts_data, dict) else None
+        if cloudinary_url:
+            redirect_url = str(cloudinary_url) if preview else _cloudinary_attachment_url(str(cloudinary_url))
+            return RedirectResponse(url=redirect_url)
         raise HTTPException(status_code=404, detail="Draft video file is missing on disk.")
 
     return FileResponse(path=local_path, media_type="video/mp4", filename=local_path.name)
@@ -664,7 +669,7 @@ def get_final_video_file(movie_id: int):
         shorts_data = movie.get("shorts_data_json") or {}
         cloudinary_url = shorts_data.get("cloudinary_video_url") if isinstance(shorts_data, dict) else None
         if cloudinary_url:
-            return RedirectResponse(url=str(cloudinary_url))
+            return RedirectResponse(url=_cloudinary_attachment_url(str(cloudinary_url)))
         raise HTTPException(status_code=404, detail="Final video file is missing on disk.")
 
     return FileResponse(path=local_path, media_type="video/mp4", filename=local_path.name)
@@ -973,6 +978,31 @@ def queue_source_video_url(movie_id: int, payload: dict = Body(...)):
         "overall_status": updated_movie.get("overall_status"),
         "video_download_status": updated_movie.get("video_download_status"),
         "message": "Source video URL queued successfully. Video downloader can use it now.",
+    }
+
+
+@router.post("/movies/{movie_id}/retry-video-download")
+def retry_video_download(movie_id: int):
+    repository = MoviePipelineRepository()
+    try:
+        movie = repository.get_movie_by_id(movie_id=movie_id)
+        if not movie:
+            raise HTTPException(status_code=404, detail="Movie not found.")
+        if movie.get("voice_status") != "COMPLETED" or not movie.get("voice_audio_path"):
+            raise HTTPException(status_code=409, detail="Voice audio must be ready before retrying video download.")
+        updated_movie = repository.retry_video_download(movie_id=movie_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not retry video download: {exc}") from exc
+
+    return {
+        "success": True,
+        "movie_id": movie_id,
+        "video_download_status": updated_movie.get("video_download_status"),
+        "overall_status": updated_movie.get("overall_status"),
+        "next_agent": updated_movie.get("next_agent"),
+        "message": "Video download reset. Start the movie pipeline to retry.",
     }
 
 
@@ -1294,6 +1324,14 @@ def _safe_source_label(label: str) -> str:
     return cleaned or "official_trailer"
 
 
+def _cloudinary_attachment_url(url: str) -> str:
+    """Return a Cloudinary URL that downloads instead of opening inline."""
+    marker = "/upload/"
+    if marker not in url or "/upload/fl_attachment/" in url:
+        return url
+    return url.replace(marker, "/upload/fl_attachment/", 1)
+
+
 def _build_frontend_movie_payload(movie: dict) -> dict:
     movie_id = int(movie["id"])
     scene_data = movie.get("scene_data_json") or {}
@@ -1319,6 +1357,7 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
     final_preview_url = f"/movies/{movie_id}/final-video-file" if final_video_path else None
     cloudinary_thumbnail_url = thumbnail_data.get("cloudinary_thumbnail_url") if isinstance(thumbnail_data, dict) else None
     cloudinary_video_url = shorts_data.get("cloudinary_video_url") if isinstance(shorts_data, dict) else None
+    cloudinary_video_download_url = _cloudinary_attachment_url(str(cloudinary_video_url)) if cloudinary_video_url else None
     bgm_data = movie.get("bgm_data_json") or {}
     cloudinary_bgm_url = bgm_data.get("cloudinary_bgm_url") if isinstance(bgm_data, dict) else None
     thumbnail_preview_url = cloudinary_thumbnail_url or (f"/movies/{movie_id}/thumbnail-file" if thumbnail_path else None)
@@ -1328,6 +1367,7 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
     run_shorts_composer_url = f"/agents/shorts-composer/run/{movie_id}?force=true"
     upload_thumbnail_url = f"/movies/{movie_id}/thumbnail-upload"
     upload_source_video_url = f"/movies/{movie_id}/source-video-url"
+    retry_video_download_url = f"/movies/{movie_id}/retry-video-download"
 
     return {
         "success": True,
@@ -1370,7 +1410,7 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
             "master_video_path": master_video_path,
             "master_video_file_url": preview_url,
             "draft_video_path": draft_video_path,
-            "draft_video_file_url": draft_preview_url,
+            "draft_video_file_url": cloudinary_video_download_url or draft_preview_url,
             "final_video_path": final_video_path,
             "final_video_file_url": final_preview_url,
             "thumbnail_path": thumbnail_path,
@@ -1378,6 +1418,7 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
             "cloudinary_bgm_url": cloudinary_bgm_url,
             "cloudinary_thumbnail_url": cloudinary_thumbnail_url,
             "cloudinary_video_url": cloudinary_video_url,
+            "cloudinary_video_download_url": cloudinary_video_download_url,
         },
         "source_videos": [
             {
@@ -1448,15 +1489,18 @@ def _build_frontend_movie_payload(movie: dict) -> dict:
             "can_preview_final_video": bool(final_preview_url),
             "can_preview_thumbnail": bool(thumbnail_preview_url),
             "can_upload_source_video_url": voice_status == "COMPLETED",
+            "can_retry_video_download": voice_status == "COMPLETED" and str(movie.get("video_download_status") or "") == "FAILED",
             "run_scene_selection_url": run_scene_selection_url,
             "run_cut_merge_url": run_cut_merge_url,
             "run_shorts_composer_url": run_shorts_composer_url,
             "run_thumbnail_url": None,
             "upload_thumbnail_url": upload_thumbnail_url,
             "upload_source_video_url": upload_source_video_url,
+            "retry_video_download_url": retry_video_download_url,
             "preview_master_video_url": preview_url,
             "preview_draft_video_url": draft_preview_url,
             "preview_final_video_url": final_preview_url,
+            "download_final_video_url": cloudinary_video_download_url or f"/movies/{movie_id}/final-video-file",
             "preview_thumbnail_url": thumbnail_preview_url,
         },
         "messages": {

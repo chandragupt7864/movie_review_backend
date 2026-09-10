@@ -63,6 +63,12 @@ def test_mobile_browser_restriction_retries_with_alternate_client():
     ) is True
 
 
+def test_missing_player_response_retries_with_alternate_client():
+    assert YoutubeDownloaderService.is_retryable_with_another_client(
+        "Failed to extract any player response"
+    ) is True
+
+
 def test_player_client_attempts_add_android_vr_fallback(monkeypatch):
     monkeypatch.setattr("app.services.youtube_downloader_service.settings.yt_dlp_player_clients", ["mweb"])
 

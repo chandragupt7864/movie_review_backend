@@ -72,6 +72,11 @@ def test_watchdog_run_scans_non_waiting_pipeline_movies_and_cleans_source_videos
                         "source_video_path": str(trailer_path.relative_to(PROJECT_ROOT)).replace("\\", "/"),
                     },
                     {
+                        "label": "duplicate_trailer",
+                        "type": "trailer",
+                        "source_video_path": str(trailer_path.relative_to(PROJECT_ROOT)).replace("\\", "/"),
+                    },
+                    {
                         "label": "fight_clip",
                         "type": "clip",
                         "source_video_path": "storage/source_videos/movie_99/fight_clip.mp4",
@@ -116,7 +121,8 @@ def test_watchdog_run_scans_non_waiting_pipeline_movies_and_cleans_source_videos
     assert result["fixed"] == 1
     assert repository.updated_source_videos is not None
     assert [item["label"] for item in repository.updated_source_videos["kept_videos"]] == ["official_trailer"]
-    assert "fight_clip" in repository.updated_source_videos["removed_labels"][0]
+    assert any("fight_clip" in item for item in repository.updated_source_videos["removed_labels"])
+    assert any("duplicate path" in item for item in repository.updated_source_videos["removed_labels"])
 
 
 def test_watchdog_does_not_requeue_completed_movie_with_trailer_metadata():

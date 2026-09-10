@@ -213,6 +213,8 @@ class YoutubeDownloaderService:
         return cls.is_transient_error(error) or any(
             marker in text
             for marker in (
+                "failed to extract any player response",
+                "no player response",
                 "can't be played on your mobile browser",
                 "cannot be played on your mobile browser",
                 "requested format is not available",

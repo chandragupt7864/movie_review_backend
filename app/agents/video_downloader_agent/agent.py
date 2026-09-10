@@ -355,7 +355,11 @@ class VideoDownloaderAgent:
                     "title": movie.get("movie_title"),
                     "error_type": type(exc).__name__,
                     "error_message": str(exc),
-                    "manual_source_url_required": False,
+                    # Once automatic retries are exhausted, keep the movie in a
+                    # recoverable state and explicitly ask for either a retry or
+                    # a manually supplied source.  Without this flag the manual
+                    # controller can immediately run the same failed job again.
+                    "manual_source_url_required": retry_exhausted,
                     "automatic_retry_blocked": retry_exhausted,
                     "youtube_auth_required": transient_failure,
                     "video_download_attempt_count": attempt_count,
@@ -369,7 +373,11 @@ class VideoDownloaderAgent:
                     status=failure_status,
                     message=(
                         f"Video download attempt {attempt_count}/{max_attempts} failed. {exc}"
-                        + (" Moved to Failed movies." if retry_exhausted else " Automatic retry queued.")
+                        + (
+                            " Automatic retries exhausted; retry the download or provide a source video."
+                            if retry_exhausted
+                            else " Automatic retry queued."
+                        )
                     ),
                     data={
                         "tmdb_id": movie.get("tmdb_id"),

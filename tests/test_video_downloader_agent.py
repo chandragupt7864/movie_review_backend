@@ -262,7 +262,7 @@ def test_downloader_agent_skips_already_downloaded_and_fetches_remaining(monkeyp
     existing_file.unlink(missing_ok=True)
 
 
-def test_downloader_third_failure_moves_movie_to_terminal_failed(monkeypatch):
+def test_downloader_third_failure_pauses_for_manual_recovery(monkeypatch):
     class FakeRepository:
         def __init__(self):
             self.failed_payload = None
@@ -297,6 +297,7 @@ def test_downloader_third_failure_moves_movie_to_terminal_failed(monkeypatch):
     assert repository.failed_payload["error_data"]["video_download_attempt_count"] == 3
     assert repository.failed_payload["error_data"]["retry_exhausted"] is True
     assert repository.failed_payload["error_data"]["automatic_retry_blocked"] is True
+    assert repository.failed_payload["error_data"]["manual_source_url_required"] is True
 
 
 def test_downloader_failure_before_limit_is_requeued(monkeypatch):

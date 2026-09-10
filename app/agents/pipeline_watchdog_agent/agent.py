@@ -228,6 +228,7 @@ class PipelineWatchdogAgent:
 
         kept: list[dict] = []
         removed: list[str] = []
+        seen_paths: set[str] = set()
 
         for item in source_videos_json:
             if not isinstance(item, dict):
@@ -244,11 +245,17 @@ class PipelineWatchdogAgent:
                 removed.append(f"{label} (no path)")
                 continue
 
+            normalized_path = path_str.replace("\\", "/").lower()
+            if normalized_path in seen_paths:
+                removed.append(f"{label} (duplicate path: {path_str})")
+                continue
+
             full_path = PROJECT_ROOT / path_str
             if not full_path.exists():
                 removed.append(f"{label} (file missing: {path_str})")
                 continue
 
+            seen_paths.add(normalized_path)
             kept.append(item)
 
         if not removed:
