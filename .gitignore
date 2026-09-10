@@ -1,0 +1,65 @@
+# Python environments
+venv/
+.venv/
+env/
+
+# Python caches and build output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local environment and secrets (keep templates)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Runtime logs
+logs/*
+!logs/.gitkeep
+*.log
+
+# Generated/downloaded media
+storage/*
+!storage/audio/
+!storage/final_videos/
+!storage/source_videos/
+!storage/thumbnails/
+storage/audio/*
+storage/final_videos/*
+storage/source_videos/*
+storage/thumbnails/*
+!storage/audio/.gitkeep
+!storage/final_videos/.gitkeep
+!storage/source_videos/.gitkeep
+!storage/thumbnails/.gitkeep
+
+# Private runtime files
+storage/private/
+*.mp3
+*.mp4
+*.mkv
+*.wav
+*.webm
+
+# Editors and operating system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+NUL
+NUL.*
