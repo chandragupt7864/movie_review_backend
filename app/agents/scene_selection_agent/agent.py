@@ -157,7 +157,7 @@ class SceneSelectionAgent:
                         "requires_semantic_selection",
                         lambda _context: False,
                     )
-                    if semantic_guard(movie_context):
+                    if semantic_guard(movie_context) and not settings.scene_allow_visual_fallback_on_gemini_error:
                         raise RuntimeError(
                             "Semantic scene selection is required for this movie's named visual subjects; "
                             f"Gemini analysis failed and motion-only fallback was blocked: {gemini_exc}"

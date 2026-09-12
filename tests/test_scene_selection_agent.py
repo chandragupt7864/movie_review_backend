@@ -283,6 +283,19 @@ def test_gemini_analysis_retries_short_plans_until_duration_is_valid(monkeypatch
     assert "Selected scenes total only 8.0 seconds" in prompts[2]
 
 
+def test_gemini_analysis_limits_sources_and_prefers_official_trailer(monkeypatch):
+    monkeypatch.setattr("app.services.gemini_video_service.settings.gemini_scene_max_videos", 1)
+    sources = [
+        {"label": "trailer_2", "type": "trailer", "duration_seconds": 180},
+        {"label": "official_trailer", "type": "trailer", "duration_seconds": 120},
+        {"label": "teaser_3", "type": "teaser", "duration_seconds": 90},
+    ]
+
+    selected = GeminiVideoService._select_analysis_sources(sources)
+
+    assert [item["label"] for item in selected] == ["official_trailer"]
+
+
 def test_scene_selection_agent_force_bypasses_next_agent_check():
     class FakeRepository:
         def get_movie_by_id(self, movie_id):
@@ -359,7 +372,11 @@ def test_scene_selection_agent_force_bypasses_next_agent_check():
     assert result["failed"] == 0
 
 
-def test_scene_selection_agent_uses_visual_fallback_when_gemini_fails():
+def test_scene_selection_agent_uses_visual_fallback_when_gemini_fails(monkeypatch):
+    monkeypatch.setattr(
+        "app.agents.scene_selection_agent.agent.settings.scene_allow_visual_fallback_on_gemini_error",
+        True,
+    )
     class FakeRepository:
         def __init__(self):
             self.scene_payload = None
@@ -405,6 +422,10 @@ def test_scene_selection_agent_uses_visual_fallback_when_gemini_fails():
     class FailingGeminiService:
         def analyze_video_for_scenes(self, **kwargs):
             raise RuntimeError("Gemini down")
+
+        @staticmethod
+        def requires_semantic_selection(movie_context):
+            return True
 
     class FakeVisualFallbackService:
         def build_scene_plan(self, source_videos, movie_context, voice_duration_seconds, target_duration_seconds, extra_visual_seconds_after_voice):

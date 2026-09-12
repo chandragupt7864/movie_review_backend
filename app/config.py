@@ -60,8 +60,9 @@ class Settings:
         self.gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
         self.gemini_ssl_verify = self._get_bool("GEMINI_SSL_VERIFY", default=True)
-        self.gemini_generate_timeout_seconds = self._get_int("GEMINI_GENERATE_TIMEOUT_SECONDS", default=240)
+        self.gemini_generate_timeout_seconds = self._get_int("GEMINI_GENERATE_TIMEOUT_SECONDS", default=480)
         self.gemini_file_processing_timeout_seconds = self._get_int("GEMINI_FILE_PROCESSING_TIMEOUT_SECONDS", default=180)
+        self.gemini_scene_max_videos = self._get_int("GEMINI_SCENE_MAX_VIDEOS", default=1)
         self.lyria_model = os.getenv("LYRIA_MODEL", "lyria-3.5").strip() or "lyria-3.5"
         self.lyria_timeout_seconds = self._get_int("LYRIA_TIMEOUT_SECONDS", default=300)
         self.lyria_output_dir = os.getenv("LYRIA_OUTPUT_DIR", "storage/bgm/generated").strip() or "storage/bgm/generated"
@@ -76,6 +77,10 @@ class Settings:
         self.scene_extra_seconds_min = self._get_float("SCENE_EXTRA_SECONDS_MIN", default=5.0)
         self.scene_extra_seconds_max = self._get_float("SCENE_EXTRA_SECONDS_MAX", default=10.0)
         self.scene_selection_prefer_visual_fallback = self._get_bool("SCENE_SELECTION_PREFER_VISUAL_FALLBACK", default=False)
+        self.scene_allow_visual_fallback_on_gemini_error = self._get_bool(
+            "SCENE_ALLOW_VISUAL_FALLBACK_ON_GEMINI_ERROR",
+            default=True,
+        )
         self.scene_output_format = os.getenv("SCENE_OUTPUT_FORMAT", "16:9").strip() or "16:9"
         self.scene_master_resolution = os.getenv("SCENE_MASTER_RESOLUTION", "1920x1080").strip() or "1920x1080"
         self.scene_detection_threshold = self._get_float("SCENE_DETECTION_THRESHOLD", default=27.0)

@@ -254,14 +254,15 @@ class GeminiVideoService:
         target_duration_seconds: float,
         extra_visual_seconds_after_voice: float,
     ) -> dict:
+        analysis_sources = self._select_analysis_sources(source_videos)
         prompt = self._build_prompt(
-            source_videos=source_videos,
+            source_videos=analysis_sources,
             movie_context=movie_context,
             voice_duration_seconds=voice_duration_seconds,
             target_duration_seconds=target_duration_seconds,
             extra_visual_seconds_after_voice=extra_visual_seconds_after_voice,
         )
-        upload_handles = [self._upload_video(video["source_video_path"]) for video in source_videos]
+        upload_handles = [self._upload_video(video["source_video_path"]) for video in analysis_sources]
         attempt_prompt = prompt
         last_error = "Gemini returned an invalid scene plan."
 
@@ -278,13 +279,22 @@ class GeminiVideoService:
             else:
                 validation = self.validate_scene_plan(
                     scene_plan=raw_plan,
-                    source_videos=source_videos,
+                    source_videos=analysis_sources,
                     voice_duration_seconds=voice_duration_seconds,
                     target_duration_seconds=target_duration_seconds,
                     movie_context=movie_context,
                 )
                 if validation["valid"]:
-                    return validation["scene_plan"]
+                    scene_plan = validation["scene_plan"]
+                    omitted_count = len(source_videos) - len(analysis_sources)
+                    if omitted_count > 0:
+                        warnings = list(scene_plan.get("warnings") or [])
+                        warnings.append(
+                            f"Gemini analysis used {len(analysis_sources)} primary source video(s); "
+                            f"skipped {omitted_count} extra trailer(s) to prevent analysis timeout."
+                        )
+                        scene_plan["warnings"] = warnings
+                    return scene_plan
 
             last_error = str(validation.get("error") or last_error)
             if attempt + 1 >= self.MAX_SCENE_PLAN_ATTEMPTS:
@@ -299,6 +309,22 @@ class GeminiVideoService:
             )
 
         raise ValueError(f"{last_error} Gemini scene plan remained invalid after {self.MAX_SCENE_PLAN_ATTEMPTS} attempts.")
+
+    @staticmethod
+    def _select_analysis_sources(source_videos: list[dict]) -> list[dict]:
+        if not source_videos:
+            raise ValueError("At least one source video is required for Gemini scene analysis.")
+
+        def priority(video: dict) -> tuple[int, int, float]:
+            label = str(video.get("label") or "").strip().lower()
+            video_type = str(video.get("type") or "").strip().lower()
+            is_official = label == "official_trailer" or label.startswith("official")
+            is_trailer = video_type == "trailer"
+            duration = float(video.get("duration_seconds") or 0.0)
+            return (0 if is_official else 1, 0 if is_trailer else 1, -duration)
+
+        limit = max(1, int(settings.gemini_scene_max_videos))
+        return sorted(source_videos, key=priority)[:limit]
 
     def validate_scene_plan(
         self,
